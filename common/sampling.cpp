@@ -295,12 +295,12 @@ llama_token common_sampler_sample(struct common_sampler * gsmpl, struct llama_co
 
     // check if it the sampled token fits the grammar
     {
-        llama_token_data       single_token_data       = { id, 1.0f, 0.0f };
-        llama_token_data_array single_token_data_array = { &single_token_data, 1, -1, false };
+        llama_token_data       single_token_data       = { id, 1.0f }; // logit
+        llama_token_data_array single_token_data_array = { &single_token_data, 1, -1, false, false };
 
         llama_sampler_apply(grmr, &single_token_data_array);
 
-        const bool is_valid = single_token_data_array.data[0].logit != -INFINITY;
+        const bool is_valid = single_token_data_array.data[0].val != -INFINITY;
         if (is_valid) {
             return id;
         }

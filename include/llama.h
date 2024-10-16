@@ -211,8 +211,9 @@ extern "C" {
     // TODO: simplify (https://github.com/ggerganov/llama.cpp/pull/9294#pullrequestreview-2286561979)
     typedef struct llama_token_data {
         llama_token id; // token id
-        float logit;    // log-odds of the token
-        float p;        // probability of the token
+        // float logit;    // log-odds of the token
+        // float p;        // probability of the token
+        float val;
     } llama_token_data;
 
     typedef struct llama_token_data_array {
@@ -221,6 +222,7 @@ extern "C" {
         size_t size;
         int64_t selected; // this is the index in the data array (i.e. not the token id)
         bool sorted;
+        bool is_probability;
     } llama_token_data_array;
 
     typedef bool (*llama_progress_callback)(float progress, void * user_data);

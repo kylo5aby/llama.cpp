@@ -33,7 +33,7 @@ static int llama_sample_dist(llama_token_data_array * cur_p, std::mt19937 & rng)
 
         bool operator==(const probs_iterator & other) const { return data == other.data; }
         bool operator!=(const probs_iterator & other) const { return data != other.data; }
-        const float & operator*() const { return data->p; }
+        const float & operator*() const { return data->val; }
         probs_iterator & operator++() { ++data; return *this; }
         probs_iterator operator++(int) { probs_iterator tmp = *this; ++data; return tmp; }
     };
@@ -69,23 +69,31 @@ static void llama_sampler_softmax_impl(llama_token_data_array * cur_p) {
     // Sort the logits in descending order
     if (!cur_p->sorted) {
         std::sort(cur_p->data, cur_p->data + cur_p->size, [](const llama_token_data & a, const llama_token_data & b) {
-            return a.logit > b.logit;
+            return a.val > b.val;
         });
         cur_p->sorted = true;
     }
 
-    float max_l = cur_p->data[0].logit;
+    float max_l = cur_p->data[0].val;
     float cum_sum = 0.0f;
 
-    for (size_t i = 0; i < cur_p->size; ++i) {
-        float p = expf(cur_p->data[i].logit - max_l);
-        cur_p->data[i].p = p;
-        cum_sum += p;
+    if (!cur_p->is_probability) {
+        for (size_t i = 0; i < cur_p->size; ++i) {
+            float p = expf(cur_p->data[i].val - max_l);
+            cur_p->data[i].val = p;
+            cum_sum += p;
+        }
+    } else {
+        cum_sum = std::accumulate(cur_p->data, cur_p->data + cur_p->size, 0.0f, [](float a, const llama_token_data & b) {
+            return a + b.val;
+        });
     }
 
     for (size_t i = 0; i < cur_p->size; ++i) {
-        cur_p->data[i].p /= cum_sum;
+        cur_p->data[i].val /= cum_sum;
     }
+
+    cur_p->is_probability = true;
 }
 
 static void llama_sampler_top_k_impl(llama_token_data_array * cur_p, int32_t k) {
@@ -93,6 +101,7 @@ static void llama_sampler_top_k_impl(llama_token_data_array * cur_p, int32_t k) 
     // if (k >= (int32_t)cur_p->size) {
     //     return;
     // }
+    GGML_ASSERT(!cur_p->is_probability && "Top-K sampler expects logits.");
 
     if (k <= 0) {
         k = cur_p->size;
@@ -103,7 +112,7 @@ static void llama_sampler_top_k_impl(llama_token_data_array * cur_p, int32_t k) 
     // Sort scores in descending order
     if (!cur_p->sorted) {
         auto comp = [](const llama_token_data & a, const llama_token_data & b) {
-            return a.logit > b.logit;
+            return a.val > b.val;
         };
         if (k <= 128) {
             std::partial_sort(cur_p->data, cur_p->data + k, cur_p->data + cur_p->size, comp);
@@ -118,7 +127,7 @@ static void llama_sampler_top_k_impl(llama_token_data_array * cur_p, int32_t k) 
             std::vector<int> histo(nbuckets, 0);
 
             for (int i = 0; i < (int)cur_p->size; ++i) {
-                const float val = cur_p->data[i].logit;
+                const float val = cur_p->data[i].val;
                 int ib = int(bucket_scale * val + bucket_inter); //nbuckets * (val - bucket_low) / (bucket_high - bucket_low);
                 ib = std::max(0, std::min(nbuckets-1, ib));
                 bucket_idx[i] = ib;
@@ -156,12 +165,14 @@ static void llama_sampler_top_k_impl(llama_token_data_array * cur_p, int32_t k) 
             }
             std::partial_sort(ptr, ptr + k - ndone, ptr + histo[ib], comp);
 
-            std::memcpy(cur_p->data, tmp_tokens.data(), k*sizeof(llama_token_data));
+            std::memcpy(cur_p->data, tmp_tokens.data(), k * sizeof(llama_token_data));
 
         }
         cur_p->sorted = true;
     }
     cur_p->size = k;
+
+    cur_p->is_probability = false;
 }
 
 static uint32_t get_rng_seed(uint32_t seed) {
@@ -390,7 +401,7 @@ static const char * llama_sampler_greedy_name(const struct llama_sampler * /*smp
 static void llama_sampler_greedy_apply(struct llama_sampler * /*smpl*/, llama_token_data_array * cur_p) {
     cur_p->selected = 0;
     for (size_t i = 1; i < cur_p->size; ++i) {
-        if (cur_p->data[i].logit > cur_p->data[cur_p->selected].logit) {
+        if (cur_p->data[i].value > cur_p->data[cur_p->selected].value) {
             cur_p->selected = i;
         }
     }
@@ -427,6 +438,11 @@ static const char * llama_sampler_dist_name(const struct llama_sampler * /*smpl*
 
 static void llama_sampler_dist_apply(struct llama_sampler * smpl, llama_token_data_array * cur_p) {
     auto * ctx = (llama_sampler_dist *) smpl->ctx;
+
+    if (!cur_p->is_probability) {
+        llama_sampler_softmax_impl(cur_p); // 检查
+    }
+
     cur_p->selected = llama_sample_dist(cur_p, ctx->rng);
 }
 
@@ -568,7 +584,7 @@ static void llama_sampler_top_p_apply(struct llama_sampler * smpl, llama_token_d
     size_t last_idx = cur_p->size;
 
     for (size_t i = 0; i < cur_p->size; ++i) {
-        cum_sum += cur_p->data[i].p;
+        cum_sum += cur_p->data[i].val;
 
         // Check if the running sum is at least p or if we have kept at least min_keep tokens
         // we set the last index to i+1 to indicate that the current iterate should be included in the set
@@ -731,7 +747,7 @@ static void llama_sampler_tail_free_apply(struct llama_sampler * smpl, llama_tok
     std::vector<float> second_derivatives(cur_p->size - 2);
 
     for (size_t i = 0; i < first_derivatives.size(); ++i) {
-        first_derivatives[i] = cur_p->data[i].p - cur_p->data[i + 1].p;
+        first_derivatives[i] = cur_p->data[i].val - cur_p->data[i + 1].val;
     }
     for (size_t i = 0; i < second_derivatives.size(); ++i) {
         second_derivatives[i] = first_derivatives[i] - first_derivatives[i + 1];
@@ -826,13 +842,13 @@ static void llama_sampler_typical_apply(struct llama_sampler * smpl, llama_token
 
     float entropy = 0.0f;
     for (size_t i = 0; i < cur_p->size; ++i) {
-        entropy += -cur_p->data[i].p * logf(cur_p->data[i].p);
+        entropy += -cur_p->data[i].val * logf(cur_p->data[i].val);
     }
 
     // Compute the absolute difference between negative log probability and entropy for each candidate
     std::vector<float> shifted_scores;
     for (size_t i = 0; i < cur_p->size; ++i) {
-        float shifted_score = fabsf(-logf(cur_p->data[i].p) - entropy);
+        float shifted_score = fabsf(-logf(cur_p->data[i].val) - entropy);
         shifted_scores.push_back(shifted_score);
     }
 
@@ -850,7 +866,7 @@ static void llama_sampler_typical_apply(struct llama_sampler * smpl, llama_token
 
     for (size_t i = 0; i < indices.size(); ++i) {
         size_t idx = indices[i];
-        cum_sum += cur_p->data[idx].p;
+        cum_sum += cur_p->data[idx].val;
 
         // Check if the running sum is greater than typical or if we have kept at least min_keep tokens
         if (cum_sum > ctx->p && i >= ctx->min_keep - 1) {
