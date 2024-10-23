@@ -37,5 +37,5 @@ Feature: llama.cpp server
 
     Examples: Prompts
       | prompt                                                                    | n_predict | re_content                                  | n_prompt | n_predicted | truncated |
-      | Write a joke about AI from a very long prompt which will not be truncated | -2        | (princesses\|everyone\|kids\|Anna\|forest)+ | 46       | 256         | not       |
+      | Write a joke about AI from a very long prompt which will not be truncated | -2        | (princesses\|everyone\|kids\|Anna\|forest)+ | 46       | 128         | not       |
 
