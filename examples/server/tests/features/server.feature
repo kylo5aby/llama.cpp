@@ -15,7 +15,7 @@ Feature: llama.cpp server
     And   256 KV cache size
     And   32 as batch size
     And   2 slots
-    And   64 server max tokens to predict
+    # And   64 server max tokens to predict
     And   prometheus compatible metrics exposed
     Then  the server is starting
     Then  the server is healthy
@@ -39,6 +39,8 @@ Feature: llama.cpp server
       | prompt                                                                    | n_predict | re_content                                  | n_prompt | n_predicted | truncated |
       | I believe the meaning of life is                                          | 8         | (read\|going)+                              | 18       | 8           | not       |
       | Write a joke about AI from a very long prompt which will not be truncated | 256       | (princesses\|everyone\|kids\|Anna\|forest)+ | 46       | 64          | not       |
+      | Write a joke about AI from a very long prompt which will not be truncated | -2        | (princesses\|everyone\|kids\|Anna\|forest)+ | 46       | 256         | not       |
+
 
   Scenario: Completion prompt truncated
     Given a prompt:
