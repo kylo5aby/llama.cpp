@@ -4271,18 +4271,18 @@ struct llama_model_loader {
 
         ggml_tensor * tensor;
 
-        llama_tensor_weight(const llama_file * file, uint16_t idx, const char * name, const struct gguf_context * gguf_ctx, ggml_tensor * tensor) : idx(idx), tensor(tensor) {
-            const int tensor_idx = gguf_find_tensor(gguf_ctx, name);
+        llama_tensor_weight(const llama_file * file, uint16_t idx, const struct gguf_context * gguf_ctx, ggml_tensor * tensor) : idx(idx), tensor(tensor) {
+            const int tensor_idx = gguf_find_tensor(gguf_ctx,  ggml_get_name(tensor));
             offs = gguf_get_data_offset(gguf_ctx) + gguf_get_tensor_offset(gguf_ctx, tensor_idx);
 
             if (offs + ggml_nbytes(tensor) < offs || offs + ggml_nbytes(tensor) > file->size) {
-                throw std::runtime_error(format("tensor '%s' data is not within the file bounds, model is corrupted or incomplete", name));
+                throw std::runtime_error(format("tensor '%s' data is not within the file bounds, model is corrupted or incomplete", ggml_get_name(tensor)));
             }
         }
     };
-    std::vector<llama_tensor_weight> weights;
-    std::unordered_map<std::string, size_t> weight_name_idx_map;
-
+    // std::vector<llama_tensor_weight> weights;
+    // std::unordered_map<std::string, size_t> weight_name_idx_map;
+    std::unordered_map<std::string, struct llama_tensor_weight> weights_map;
     std::unordered_map<std::string, struct llama_model_kv_override> kv_overrides;
 
     struct gguf_context * meta = NULL;
@@ -4324,7 +4324,15 @@ struct llama_model_loader {
         // For subsidiary files, `meta` tensor data offset must not be used,
         // so we build a unified tensors index for weights.
         for (ggml_tensor * cur = ggml_get_first_tensor(ctx); cur; cur = ggml_get_next_tensor(ctx, cur)) {
-            weights.emplace_back(files.back().get(), 0, cur->name, meta, cur);
+            // weights.emplace_back(files.back().get(), 0, cur->name, meta, cur);
+            std::string tensor_name = std::string(cur->name);
+            // make sure there is no duplicated tensor names
+            if (weights_map.find(tensor_name) != weights_map.end()) {
+                throw std::runtime_error(format("invalid model: tensor '%s' is duplicated", ggml_get_name(cur)));
+            }
+            n_elements += ggml_nelements(cur);
+            n_bytes    += ggml_nbytes(cur);
+            weights_map.emplace(tensor_name, llama_tensor_weight(files.back().get(), 0, meta, cur));
         }
         uint16_t n_split = 0;
         get_key(llm_kv(LLM_KV_SPLIT_COUNT), n_split, false);
@@ -4364,7 +4372,15 @@ struct llama_model_loader {
 
                 // Save tensors data offset info of the shard.
                 for (ggml_tensor * cur = ggml_get_first_tensor(ctx); cur; cur = ggml_get_next_tensor(ctx, cur)) {
-                    weights.emplace_back(files.back().get(), idx, cur->name, ctx_gguf, cur);
+                    // weights.emplace_back(files.back().get(), idx, cur->name, ctx_gguf, cur);
+                    std::string tensor_name = std::string(cur->name);
+                    // make sure there is no duplicated tensor names
+                    if (weights_map.find(tensor_name) != weights_map.end()) {
+                        throw std::runtime_error(format("invalid model: tensor '%s' is duplicated", ggml_get_name(cur)));
+                    }
+                    n_elements += ggml_nelements(cur);
+                    n_bytes    += ggml_nbytes(cur);
+                    weights_map.emplace(tensor_name, llama_tensor_weight(files.back().get(), idx, ctx_gguf, cur));
                 }
 
                 gguf_free(ctx_gguf);
@@ -4374,7 +4390,8 @@ struct llama_model_loader {
 
             // sanity check
             {
-                const int n_tensors_loaded = (int) weights.size();
+                // const int n_tensors_loaded = (int) weights.size();
+                const int n_tensors_loaded = (int) weights_map.size();
                 if (n_tensors != n_tensors_loaded) {
                     throw std::runtime_error(format("corrupted model: %d tensors expected but %d found", n_tensors, n_tensors_loaded));
                 }
@@ -4384,24 +4401,25 @@ struct llama_model_loader {
         }
 
         n_kv      = gguf_get_n_kv(meta);
-        n_tensors = weights.size();
+        // n_tensors = weights.size();
+        n_tensors = weights_map.size();
 
         fver = (enum llama_fver) gguf_get_version(meta);
 
-        std::set<std::string> tensor_names;
-        for (size_t i = 0; i < weights.size(); i++) {
-            const auto & w = weights.at(i);
-            n_elements += ggml_nelements(w.tensor);
-            n_bytes    += ggml_nbytes(w.tensor);
-            // make sure there is no duplicated tensor names
-            const std::string name(w.tensor->name);
-            auto found = tensor_names.find(name);
-            if (found != tensor_names.end()) {
-                throw std::runtime_error(format("invalid model: tensor '%s' is duplicated", w.tensor->name));
-            }
-            tensor_names.insert(name);
-            weight_name_idx_map[name] = i;
-        }
+        // std::set<std::string> tensor_names;
+        // for (size_t i = 0; i < weights.size(); i++) {
+        //     const auto & w = weights.at(i);
+        //     n_elements += ggml_nelements(w.tensor);
+        //     n_bytes    += ggml_nbytes(w.tensor);
+        //     // make sure there is no duplicated tensor names
+        //     const std::string name(w.tensor->name);
+        //     auto found = tensor_names.find(name);
+        //     if (found != tensor_names.end()) {
+        //         throw std::runtime_error(format("invalid model: tensor '%s' is duplicated", w.tensor->name));
+        //     }
+        //     tensor_names.insert(name);
+        //     weight_name_idx_map[name] = i;
+        // }
 
         LLAMA_LOG_INFO("%s: loaded meta data with %d key-value pairs and %d tensors from %s (version %s)\n",
                 __func__, n_kv, n_tensors, fname.c_str(), llama_file_version_name(fver));
@@ -4414,8 +4432,26 @@ struct llama_model_loader {
             uint32_t n_type_max = 0;
             enum ggml_type type_max = GGML_TYPE_F32;
 
-            for (int i = 0; i < n_tensors; i++) {
-                const ggml_tensor * tensor = weights.at(i).tensor;
+            // for (int i = 0; i < n_tensors; i++) {
+            //     const ggml_tensor * tensor = weights.at(i).tensor;
+            //     enum ggml_type type = tensor->type;
+
+            //     n_type[type]++;
+
+            //     if (n_type_max < n_type[type]) {
+            //         n_type_max = n_type[type];
+            //         type_max   = type;
+            //     }
+
+            //     if (trace > 0) {
+            //         const uint16_t sid = weights.at(i).idx;
+            //         LLAMA_LOG_INFO("%s: - tensor %4d, split %2d: %32s %-8s [ %s ]\n", __func__, i, sid, ggml_get_name(tensor), ggml_type_name(type), llama_format_tensor_shape(tensor).c_str());
+            //     }
+            // }
+
+            for (auto it = weights_map.begin(); it != weights_map.end(); it++) {
+                const llama_tensor_weight & w = it->second;
+                const ggml_tensor * tensor = w.tensor;
                 enum ggml_type type = tensor->type;
 
                 n_type[type]++;
@@ -4426,8 +4462,10 @@ struct llama_model_loader {
                 }
 
                 if (trace > 0) {
-                    const uint16_t sid = weights.at(i).idx;
-                    LLAMA_LOG_INFO("%s: - tensor %4d, split %2d: %32s %-8s [ %s ]\n", __func__, i, sid, ggml_get_name(tensor), ggml_type_name(type), llama_format_tensor_shape(tensor).c_str());
+                    // const uint16_t sid = w.idx;
+                    // LLAMA_LOG_INFO("%s: - tensor %4d, split %2d: %32s %-8s [ %s ]\n", __func__, i, sid, ggml_get_name(tensor), ggml_type_name(type), llama_format_tensor_shape(tensor).c_str());
+                    // LLAMA_LOG_INFO("%s: - tensor %4d, split %2d: %32s %-8s [ %s ]\n", __func__, i, sid, ggml_get_name(tensor), ggml_type_name(type), llama_format_tensor_shape(tensor).c_str());
+
                 }
             }
 
@@ -4691,23 +4729,27 @@ struct llama_model_loader {
         return llm_kv.arch;
     }
 
-    const char * get_tensor_name(int i) const {
-        return weights.at(i).tensor->name;
-    }
+    // const char * get_tensor_name(int i) const {
+    //     return weights.at(i).tensor->name;
+    // }
 
     const llama_tensor_weight * get_weight(const char * name) const {
         std::string tensor_name(name);
-        auto pos = weight_name_idx_map.find(tensor_name);
-        if (pos != weight_name_idx_map.end()) {
-            return &weights.at(pos->second);
+        // auto pos = weight_name_idx_map.find(tensor_name);
+        // if (pos != weight_name_idx_map.end()) {
+        //     return &weights.at(pos->second);
+        // }
+        auto pos = weights_map.find(tensor_name);
+        if (pos != weights_map.end()) {
+            return &pos->second;
         }
 
         return nullptr;
     }
 
-    const llama_tensor_weight * get_weight(int i) const {
-        return get_weight(get_tensor_name(i));
-    }
+    // const llama_tensor_weight * get_weight(int i) const {
+    //     return get_weight(get_tensor_name(i));
+    // }
 
     const llama_tensor_weight & require_weight(const char * name) const {
         const llama_tensor_weight * weight = get_weight(name);
@@ -4733,9 +4775,9 @@ struct llama_model_loader {
         return tensor;
     }
 
-    struct ggml_tensor * get_tensor_meta(int i) const {
-        return get_tensor_meta(get_tensor_name(i));
-    }
+    // struct ggml_tensor * get_tensor_meta(int i) const {
+    //     return get_tensor_meta(get_tensor_name(i));
+    // }
 
     const struct ggml_tensor * check_tensor_dims(const std::string & name, const std::vector<int64_t> & ne, bool required) const {
         const struct ggml_tensor * cur = get_tensor_meta(name.c_str());
@@ -4843,8 +4885,10 @@ struct llama_model_loader {
         }
 
         // compute the total size of all tensors for progress reporting
-        for (auto & w : weights) {
-            size_data += ggml_nbytes(w.tensor);
+        // for (auto & w : weights) {
+        //     size_data += ggml_nbytes(w.tensor);
+        for (auto it = weights_map.begin(); it != weights_map.end(); it++) {
+            size_data += ggml_nbytes(it->second.tensor);
         }
     }
 
@@ -18599,8 +18643,24 @@ static void llama_model_quantize_internal(const std::string & fname_inp, const s
         }
     }
 
-    for (int i = 0; i < ml.n_tensors; ++i) {
-        const struct ggml_tensor * meta = ml.get_tensor_meta(i);
+    // for (int i = 0; i < ml.n_tensors; ++i) {
+    //     const struct ggml_tensor * meta = ml.get_tensor_meta(i);
+
+    //     const std::string name = ggml_get_name(meta);
+
+    //     // TODO: avoid hardcoded tensor names - use the TN_* constants
+    //     if (name.find("attn_v.weight")   != std::string::npos ||
+    //         name.find("attn_qkv.weight") != std::string::npos ||
+    //         name.find("attn_kv_b.weight")!= std::string::npos) {
+    //         ++qs.n_attention_wv;
+    //     } else if (name == LLM_TN(model.arch)(LLM_TENSOR_OUTPUT, "weight")) {
+    //         qs.has_output = true;
+    //     }
+    // }
+    for (auto it = ml.weights_map.begin(); it != ml.weights_map.end(); ++it) {
+        // const struct ggml_tensor * meta = ml.get_tensor_meta(i);
+        const struct ggml_tensor * meta = it->second.tensor;
+
 
         const std::string name = ggml_get_name(meta);
 
@@ -18640,25 +18700,40 @@ static void llama_model_quantize_internal(const std::string & fname_inp, const s
     std::vector<no_init<float>> f32_conv_buf;
 
     uint16_t n_split = 1;
+    const auto & weights_map = ml.weights_map;
+
     // Assume split index is continuous
     if (params->keep_split) {
-        for (int i = 0; i < ml.n_tensors; ++i) {
-            n_split = std::max(uint16_t(ml.get_weight(i)->idx+1), n_split);
+        // for (int i = 0; i < ml.n_tensors; ++i) {
+        //     // n_split = std::max(uint16_t(ml.get_weight(i)->idx+1), n_split);
+        // }
+        for (auto it = weights_map.begin(); it != weights_map.end(); ++it) {
+            n_split = std::max(uint16_t(it->second.idx+1), n_split);
         }
+
     }
     std::vector<gguf_context*> ctx_outs(n_split, NULL);
     ctx_outs[0] = ctx_out;
 
     // populate the original tensors so we get an initial meta data
-    for (int i = 0; i < ml.n_tensors; ++i) {
-        auto weight = ml.get_weight(i);
-        uint16_t i_split = params->keep_split ? weight->idx : 0;
-        struct ggml_tensor * tensor = weight->tensor;
+    // for (int i = 0; i < ml.n_tensors; ++i) {
+    //     auto weight = ml.get_weight(i);
+    //     uint16_t i_split = params->keep_split ? weight->idx : 0;
+    //     struct ggml_tensor * tensor = weight->tensor;
+    //     if (ctx_outs[i_split] == NULL) {
+    //         ctx_outs[i_split] = gguf_init_empty();
+    //     }
+    //     gguf_add_tensor(ctx_outs[i_split], tensor);
+    // }
+    for (auto it = weights_map.begin(); it != weights_map.end(); ++it) {
+        uint16_t i_split = params->keep_split ? it->second.idx : 0;
+        struct ggml_tensor * tensor = it->second.tensor;
         if (ctx_outs[i_split] == NULL) {
             ctx_outs[i_split] = gguf_init_empty();
         }
         gguf_add_tensor(ctx_outs[i_split], tensor);
     }
+
 
     // Set split info if needed
     if (n_split > 1) {
@@ -18700,12 +18775,14 @@ static void llama_model_quantize_internal(const std::string & fname_inp, const s
 
     const auto tn = LLM_TN(model.arch);
     new_ofstream(0);
-    for (int i = 0; i < ml.n_tensors; ++i) {
-        auto weight = ml.get_weight(i);
-        struct ggml_tensor * tensor = weight->tensor;
-        if (weight->idx != cur_split && params->keep_split) {
+    // for (int i = 0; i < ml.n_tensors; ++i) {
+    for (auto it = weights_map.begin(); it != weights_map.end(); ++it) {
+        // auto weight = ml.get_weight(i);
+        auto weight = it->second;
+        struct ggml_tensor * tensor = weight.tensor;
+        if (weight.idx != cur_split && params->keep_split) {
             close_ofstream();
-            new_ofstream(weight->idx);
+            new_ofstream(weight.idx);
         }
 
         const std::string name = ggml_get_name(tensor);
