@@ -90,6 +90,7 @@ extern "C" {
     GGML_API void ggml_backend_tensor_set(      struct ggml_tensor * tensor, const void * data, size_t offset, size_t size);
     GGML_API void ggml_backend_tensor_get(const struct ggml_tensor * tensor,       void * data, size_t offset, size_t size);
     GGML_API void ggml_backend_tensor_memset(   struct ggml_tensor * tensor,     uint8_t value, size_t offset, size_t size);
+    GGML_API void ggml_backend_tensor_set_device(struct ggml_tensor * tensor, int fd, size_t size, size_t file_offset, size_t buf_offset);
 
     GGML_API void ggml_backend_synchronize(ggml_backend_t backend);
 

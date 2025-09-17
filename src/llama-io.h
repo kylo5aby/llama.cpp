@@ -18,6 +18,11 @@ public:
     virtual size_t n_bytes() = 0;
 
     void write_string(const std::string & str);
+
+    // for debug only
+    virtual size_t tell() {
+        return 0;
+    }
 };
 
 class llama_io_read_i {
@@ -30,6 +35,26 @@ public:
 
     // bytes read so far
     virtual size_t n_bytes() = 0;
+
+    // for debug only
+    virtual void update_size_read(size_t size) {
+        // do nothing
+    }
+
+    // for debug only
+    virtual int get_fd() {
+        return -1;
+    }
+
+    // for debug only
+    virtual void seek(size_t offset, int whence) const {
+        // do nothing
+    }
+
+    // for debug only
+    virtual size_t tell() const {
+        return 0;
+    }
 
     void read_string(std::string & str);
 };

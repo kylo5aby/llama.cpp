@@ -287,6 +287,22 @@ void ggml_backend_tensor_set(struct ggml_tensor * tensor, const void * data, siz
     buf->iface.set_tensor(buf, tensor, data, offset, size);
 }
 
+void ggml_backend_tensor_set_device(struct ggml_tensor * tensor, int fd, size_t size, size_t file_offset, size_t buf_offset)
+ {
+    GGML_ASSERT(tensor);
+    ggml_backend_buffer_t buf = tensor->view_src ? tensor->view_src->buffer : tensor->buffer;
+
+    if (size == 0) {
+        return;
+    }
+
+    GGML_ASSERT(buf != NULL && "tensor buffer not set");
+    GGML_ASSERT(tensor->data != NULL && "tensor not allocated");
+    // GGML_ASSERT(offset + size <= ggml_nbytes(tensor) && "tensor write out of bounds");
+
+    buf->iface.set_tensor_device(buf, tensor, fd, size, file_offset, buf_offset);
+}
+
 void ggml_backend_tensor_get(const struct ggml_tensor * tensor, void * data, size_t offset, size_t size) {
     GGML_ASSERT(tensor);
     ggml_backend_buffer_t buf = tensor->view_src ? tensor->view_src->buffer : tensor->buffer;
@@ -599,6 +615,7 @@ static const struct ggml_backend_buffer_i ggml_backend_multi_buffer_i = {
     /* .cpy_tensor      = */ NULL,
     /* .clear           = */ ggml_backend_multi_buffer_clear,
     /* .reset           = */ NULL,
+    /* .set_tensor_device = */ NULL,
 };
 
 ggml_backend_buffer_t ggml_backend_multi_buffer_alloc_buffer(ggml_backend_buffer_t * buffers, size_t n_buffers) {

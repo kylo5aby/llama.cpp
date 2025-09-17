@@ -55,6 +55,7 @@ extern "C" {
         void         (*clear)        (ggml_backend_buffer_t buffer, uint8_t value);
         // (optional) reset any internal state due to tensor initialization, such as tensor extras
         void         (*reset)        (ggml_backend_buffer_t buffer);
+        void         (*set_tensor_device)   (ggml_backend_buffer_t buffer, struct ggml_tensor * tensor, int fd, size_t size, size_t file_offset, size_t buf_offset);
     };
 
     struct ggml_backend_buffer {

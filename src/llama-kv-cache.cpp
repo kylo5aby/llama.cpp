@@ -1,5 +1,7 @@
 #include "llama-kv-cache.h"
 
+#include "ggml-backend.h"
+#include "ggml.h"
 #include "llama-impl.h"
 #include "llama-io.h"
 #include "llama-model.h"
@@ -8,9 +10,38 @@
 #include <algorithm>
 #include <cassert>
 #include <cmath>
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
 #include <limits>
 #include <map>
 #include <stdexcept>
+#include <iostream>
+#include <cstring>
+#include <time.h>
+
+// #define GDS_ALIGNMENT 4096
+
+// int32_t find_aligned_to_read(uint32_t file_offset, size_t tensor_buffer_offset) {
+    
+//     size_t file_remainder = file_offset % GDS_ALIGNMENT;
+//     size_t tensor_remainder = tensor_buffer_offset % GDS_ALIGNMENT;
+    
+//     if (file_remainder == tensor_remainder) {
+//         return 0;
+//     }
+    
+//     int32_t to_read = 0;
+//     while (to_read < GDS_ALIGNMENT) {
+//         if ((file_offset + to_read) % GDS_ALIGNMENT == 0 && 
+//             (tensor_buffer_offset + to_read) % GDS_ALIGNMENT == 0) {
+//             return to_read;
+//         }
+//         to_read++;
+//     }
+    
+//     return -1;
+// }
 
 //
 // llama_kv_cache
@@ -1540,6 +1571,15 @@ void llama_kv_cache::state_write_data(llama_io_write_i & io, const cell_ranges_t
         const uint64_t k_size_row = ggml_row_size(k->type, n_embd_k_gqa);
         io.write(&k_size_row, sizeof(k_size_row));
 
+        uint64_t file_offset = io.tell();
+        uint64_t padding_size = PADDING_SIZE(file_offset);
+        if (padding_size > 0) {
+            void *buf = malloc(padding_size);
+            memset(buf, 0, padding_size);
+            io.write(buf, padding_size);
+            free(buf);
+        }
+
         // Read each range of cells of k_size length each into tmp_buf and write out
         for (const auto & range : cr.data) {
             const size_t range_size = range.second - range.first;
@@ -1563,6 +1603,15 @@ void llama_kv_cache::state_write_data(llama_io_write_i & io, const cell_ranges_t
             // Write row size of value
             const uint64_t v_size_row = ggml_row_size(v->type, n_embd_v_gqa);
             io.write(&v_size_row, sizeof(v_size_row));
+
+            uint64_t file_offset = io.tell();
+            uint64_t padding_size = PADDING_SIZE(file_offset);
+            if (padding_size > 0) {
+                void *buf = malloc(padding_size);
+                memset(buf, 0, padding_size);
+                io.write(buf, padding_size);
+                free(buf);
+            }
 
             // Read each range of cells of v_size length each into tmp_buf and write out
             for (const auto & range : cr.data) {
@@ -1755,9 +1804,48 @@ bool llama_kv_cache::state_read_data(llama_io_read_i & io, uint32_t strm, uint32
             return false;
         }
 
+        uint64_t file_offset = io.tell();
+        uint64_t padding_size = PADDING_SIZE(file_offset);
+        if (padding_size > 0) {
+            void *buf = malloc(padding_size);
+            io.read_to(buf, padding_size);
+            free(buf);
+        }
+
         if (cell_count) {
             // Read and set the keys for the whole cell range
-            ggml_backend_tensor_set(k, io.read(cell_count * k_size_row), head * k_size_row, cell_count * k_size_row);
+            uint32_t buf_offset = (char*)k->data - (char *)ggml_backend_buffer_get_base(k->buffer);
+            uint32_t file_offset = io.tell();
+            uint32_t aligned_read_size = ALIGN_UP(cell_count * k_size_row);
+            int fd = io.get_fd();
+
+            buf_offset = head * k_size_row + buf_offset; // head * k_size_row is 0
+            if (!IS_FOUR_K_ALIGNED(file_offset)) {
+                printf("file_offset is not four k aligned: %u\n", file_offset);
+            }
+            if (!IS_FOUR_K_ALIGNED(aligned_read_size)) {
+                printf("aligned_read_size is not four k aligned: %u\n", aligned_read_size);
+            }
+            if (!IS_FOUR_K_ALIGNED(buf_offset)) {
+                printf("buf_offset is not four k aligned: %u\n", buf_offset);
+            }
+
+            // ggml_backend_tensor_set(k, io.read(aligned_read_size), head * k_size_row, aligned_read_size);
+
+            ggml_backend_tensor_set_device(k, fd, aligned_read_size, file_offset, buf_offset);
+
+            // if not validate
+            io.seek(aligned_read_size, SEEK_CUR);
+            io.update_size_read(aligned_read_size);
+
+            // // validate
+            // const void *k_data = io.read(aligned_read_size);
+            // void *k_data_validate = malloc(aligned_read_size);
+            // ggml_backend_tensor_get(k, k_data_validate, head * k_size_row, aligned_read_size);
+            // if (memcmp(k_data, k_data_validate, aligned_read_size) != 0) {
+            //     perror("k_data is not equal to k->data\n");
+            // }
+            // free(k_data_validate);
         }
     }
 
@@ -1787,9 +1875,47 @@ bool llama_kv_cache::state_read_data(llama_io_read_i & io, uint32_t strm, uint32
                 return false;
             }
 
+            uint64_t file_offset = io.tell();
+            uint64_t padding_size = PADDING_SIZE(file_offset);
+            if (padding_size > 0) {
+                void *buf = malloc(padding_size);
+                io.read_to(buf, padding_size);
+                free(buf);
+            }
+
             if (cell_count) {
                 // Read and set the values for the whole cell range
-                ggml_backend_tensor_set(v, io.read(cell_count * v_size_row), head * v_size_row, cell_count * v_size_row);
+                uint32_t buf_offset = (char*)v->data - (char *)ggml_backend_buffer_get_base(v->buffer);
+                uint32_t file_offset = io.tell();
+                uint32_t aligned_read_size = ALIGN_UP(cell_count * v_size_row);
+                int fd = io.get_fd();
+
+                if (!IS_FOUR_K_ALIGNED(file_offset)) {
+                    printf("file_offset is not four k aligned: %u\n", file_offset);
+                }
+                if (!IS_FOUR_K_ALIGNED(aligned_read_size)) {
+                    printf("aligned_read_size is not four k aligned: %u\n", aligned_read_size);
+                }
+                if (!IS_FOUR_K_ALIGNED(buf_offset)) {
+                    printf("buf_offset is not four k aligned: %u\n", buf_offset);
+                }
+                
+                // ggml_backend_tensor_set(v, io.read(aligned_read_size), head * v_size_row, aligned_read_size);
+
+                ggml_backend_tensor_set_device(v, fd, aligned_read_size, file_offset, buf_offset);
+
+                // if not validate
+                io.seek(aligned_read_size, SEEK_CUR);
+                io.update_size_read(aligned_read_size);
+
+                // // validate
+                // const void *v_data = io.read(aligned_read_size);
+                // void *v_data_validate = malloc(aligned_read_size);
+                // ggml_backend_tensor_get(v, v_data_validate, head * v_size_row, aligned_read_size);
+                // if (memcmp(v_data, v_data_validate, aligned_read_size) != 0) {
+                //     perror("v_data is not equal to v->data\n");
+                // }
+                // free(v_data_validate);
             }
         }
     } else {

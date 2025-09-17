@@ -1605,6 +1605,10 @@ public:
         return size_written;
     }
 
+    size_t tell() override {
+        return file->tell();
+    }
+
 private:
     llama_file * file;
     size_t size_written = 0;
@@ -1628,6 +1632,26 @@ public:
 
     size_t n_bytes() override {
         return size_read;
+    }
+
+    // for debug only
+    int get_fd() override {
+        return file->file_id();
+    }
+
+    // for debug only
+    void update_size_read(size_t size) override {
+        size_read += size;
+    }
+
+    // for debug only
+    void seek(size_t offset, int whence) const override {
+        file->seek(offset, whence);
+    }
+
+    // for debug only
+    size_t tell() const override {
+        return file->tell();
     }
 
 private:

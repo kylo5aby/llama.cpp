@@ -187,3 +187,19 @@ if (GGML_SYCL_DEVICE_ARCH)
     target_compile_options(ggml-sycl PRIVATE -Xsycl-target-backend --offload-arch=${GGML_SYCL_DEVICE_ARCH})
     target_link_options(ggml-sycl PRIVATE -Xsycl-target-backend --offload-arch=${GGML_SYCL_DEVICE_ARCH})
 endif()
+
+# Add zefile library support
+find_library(ZEFILE_LIB zefile PATHS /usr/local/lib)
+find_library(ZE_LOADER_LIB ze_loader PATHS /usr/lib/x86_64-linux-gnu)
+
+if (ZEFILE_LIB AND ZE_LOADER_LIB)
+    target_include_directories(ggml-sycl PRIVATE /usr/local/include)
+    target_link_libraries(ggml-sycl PRIVATE ${ZEFILE_LIB} ${ZE_LOADER_LIB})
+    
+    target_link_libraries(ggml-sycl PRIVATE /usr/local/lib/libzefile.so.1)
+    target_link_libraries(ggml-sycl PRIVATE /usr/lib/x86_64-linux-gnu/libze_loader.so.1)
+    
+    message(STATUS "Found zefile libraries: ${ZEFILE_LIB}, ${ZE_LOADER_LIB}")
+else()
+    message(WARNING "zefile or ze_loader libraries not found")
+endif()

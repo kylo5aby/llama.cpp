@@ -28,7 +28,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <regex>
-
+extern "C" {
+    #include <ze_file.h>
+}
 #include <sycl/sycl.hpp>
 #include <sycl/half_type.hpp>
 
@@ -408,6 +410,35 @@ catch (sycl::exception const &exc) {
   std::exit(1);
 }
 
+static void ggml_backend_sycl_buffer_set_tensor_device(ggml_backend_buffer_t buffer,
+                                                ggml_tensor *tensor,
+                                                int fd, size_t size,
+                                                size_t offset, size_t buf_offset) try {
+    GGML_SYCL_DEBUG("[SYCL] call %s", __func__);
+    GGML_SYCL_DEBUG("%s", debug_get_tensor_str(": tensor", tensor).c_str());
+    GGML_SYCL_DEBUG(" size=%zu offset=%zu\n", size, offset);
+
+    ggml_backend_sycl_buffer_context * ctx = ( ggml_backend_sycl_buffer_context *)buffer->context;
+    ggml_sycl_set_device(ctx->device);
+    // auto stream = &(dpct::dev_mgr::instance().get_device(ctx->device).default_queue()); //  sycl::queue
+    // SYCL_CHECK(CHECK_TRY_ERROR(dpct::dev_mgr::instance().get_device(ctx->device).queues_wait_and_throw()));
+
+    sycl::device dev = dpct::dev_mgr::instance().get_device(ctx->device);
+    ze_device_handle_t ze_device = sycl::get_native<sycl::backend::ext_oneapi_level_zero>(dev);
+    sycl::context sycl_ctx = ctx->stream->get_context();
+    ze_context_handle_t ze_context = sycl::get_native<sycl::backend::ext_oneapi_level_zero>(sycl_ctx);
+
+    ze_file_handle_t file_handle = {ze_context, ze_device, fd};
+
+    ssize_t ret = zeFileRead(&file_handle, ctx->dev_ptr, size, (off_t)offset, (off_t)buf_offset);
+    assert(ret == size);
+}
+catch (sycl::exception const &exc) {
+  std::cerr << exc.what() << "Exception caught at file:" << __FILE__
+            << ", line:" << __LINE__ << std::endl;
+  std::exit(1);
+}
+
 static void ggml_backend_sycl_buffer_get_tensor(ggml_backend_buffer_t buffer,
                                                 const ggml_tensor *tensor,
                                                 void *data, size_t offset,
@@ -567,6 +598,7 @@ static const ggml_backend_buffer_i ggml_backend_sycl_buffer_interface = {
     /* .cpy_tensor      = */ ggml_backend_sycl_buffer_cpy_tensor,
     /* .clear           = */ ggml_backend_sycl_buffer_clear,
     /* .reset           = */ ggml_backend_sycl_buffer_reset,
+    /* .set_tensor_device = */ ggml_backend_sycl_buffer_set_tensor_device,
 };
 
 // sycl buffer type
@@ -609,7 +641,8 @@ catch (sycl::exception const &exc) {
 }
 
 static size_t ggml_backend_sycl_buffer_type_get_alignment(ggml_backend_buffer_type_t buft) {
-    return 128;
+    // return 128;
+    return 4096;
     GGML_UNUSED(buft);
 }
 
@@ -1013,6 +1046,7 @@ static struct ggml_backend_buffer_i ggml_backend_sycl_split_buffer_interface = {
     /* .cpy_tensor      = */ NULL,
     /* .clear           = */ ggml_backend_sycl_split_buffer_clear,
     /* .reset           = */ NULL,
+    /* .set_tensor_device = */ NULL,
 };
 
 // sycl split buffer type

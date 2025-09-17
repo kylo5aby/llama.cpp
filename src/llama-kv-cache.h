@@ -13,6 +13,18 @@ struct llama_hparams;
 struct llama_model;
 struct llama_context;
 
+#define FOUR_K_ALIGNMENT 4096
+#define IS_FOUR_K_ALIGNED(size) ((size) % FOUR_K_ALIGNMENT == 0)
+#define PADDING_SIZE(size) ((FOUR_K_ALIGNMENT - (size) % FOUR_K_ALIGNMENT) % FOUR_K_ALIGNMENT)
+
+#ifndef ALIGN_DOWN
+#define ALIGN_DOWN(addr) ((addr) & ~((FOUR_K_ALIGNMENT) - 1))
+#endif
+
+#ifndef ALIGN_UP
+#define ALIGN_UP(addr) (((addr) + (FOUR_K_ALIGNMENT) - 1) & ~((FOUR_K_ALIGNMENT) - 1))
+#endif
+
 //
 // llama_kv_cache
 //
