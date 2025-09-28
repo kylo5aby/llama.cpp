@@ -1834,18 +1834,8 @@ bool llama_kv_cache::state_read_data(llama_io_read_i & io, uint32_t strm, uint32
 
             ggml_backend_tensor_set_device(k, fd, aligned_read_size, file_offset, buf_offset);
 
-            // if not validate
             io.seek(aligned_read_size, SEEK_CUR);
             io.update_size_read(aligned_read_size);
-
-            // // validate
-            // const void *k_data = io.read(aligned_read_size);
-            // void *k_data_validate = malloc(aligned_read_size);
-            // ggml_backend_tensor_get(k, k_data_validate, head * k_size_row, aligned_read_size);
-            // if (memcmp(k_data, k_data_validate, aligned_read_size) != 0) {
-            //     perror("k_data is not equal to k->data\n");
-            // }
-            // free(k_data_validate);
         }
     }
 
@@ -1904,18 +1894,8 @@ bool llama_kv_cache::state_read_data(llama_io_read_i & io, uint32_t strm, uint32
 
                 ggml_backend_tensor_set_device(v, fd, aligned_read_size, file_offset, buf_offset);
 
-                // if not validate
                 io.seek(aligned_read_size, SEEK_CUR);
                 io.update_size_read(aligned_read_size);
-
-                // // validate
-                // const void *v_data = io.read(aligned_read_size);
-                // void *v_data_validate = malloc(aligned_read_size);
-                // ggml_backend_tensor_get(v, v_data_validate, head * v_size_row, aligned_read_size);
-                // if (memcmp(v_data, v_data_validate, aligned_read_size) != 0) {
-                //     perror("v_data is not equal to v->data\n");
-                // }
-                // free(v_data_validate);
             }
         }
     } else {

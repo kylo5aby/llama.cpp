@@ -244,6 +244,7 @@ int main(int argc, char ** argv) {
             LOG_INF("%s: The session file is empty. A new session will be initialized.\n", __func__);
         } else {
             // The file exists and is not empty
+            auto start = ggml_time_us();
             session_tokens.resize(n_ctx);
             size_t n_token_count_out = 0;
             if (!llama_state_load_file(ctx, path_session.c_str(), session_tokens.data(), session_tokens.capacity(), &n_token_count_out)) {
@@ -251,7 +252,9 @@ int main(int argc, char ** argv) {
                 return 1;
             }
             session_tokens.resize(n_token_count_out);
+            auto end = ggml_time_us();
             LOG_INF("%s: loaded a session with prompt size of %d tokens\n", __func__, (int)session_tokens.size());
+            LOG_INF("%s: load session time: %f microseconds\n", __func__, 1e-3 * (end - start));
         }
     }
 
